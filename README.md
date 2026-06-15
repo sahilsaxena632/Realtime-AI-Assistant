@@ -1,4 +1,4 @@
-# Real-time AI Interview Assistant
+# Real-time AI Assistant
 
 An invisible background daemon for Pop!_OS that captures both sides of an
 interview call, streams the audio to **Gemini Live** for end-to-end
