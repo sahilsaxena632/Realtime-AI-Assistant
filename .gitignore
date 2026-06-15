@@ -1,0 +1,10 @@
+.env
+__pycache__/
+*.pyc
+*.pyo
+*.log
+.venv/
+venv/
+*.egg-info/
+.DS_Store
+calibration.json

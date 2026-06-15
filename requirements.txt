@@ -1,0 +1,14 @@
+google-generativeai>=0.8.0
+websockets>=12.0
+deepgram-sdk>=3.7,<4
+flask
+flask-sock
+sounddevice
+numpy
+python-daemon
+python-dotenv
+anthropic
+openai
+groq
+qrcode[pil]
+pyannote.audio
