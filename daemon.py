@@ -130,7 +130,12 @@ class InterviewDaemon:
 
     def _handle_provider_name(self, name):
         # A fallback provider reporting "gemini-live" means Gemini recovered.
-        if name == "gemini-live" and isinstance(self.provider, DeepgramGroqProvider):
+        # Only auto-restore when Gemini is the user's configured primary.
+        if (
+            name == "gemini-live"
+            and isinstance(self.provider, DeepgramGroqProvider)
+            and config.PRIMARY_PROVIDER == "gemini"
+        ):
             log("daemon: fallback signaled Gemini recovery; restoring primary")
             self._try_gemini_restore()
         else:
@@ -146,8 +151,12 @@ class InterviewDaemon:
             self.server.push({"type": "provider", "name": "deepgram-fallback"})
             self._switch_to_fallback()
         elif isinstance(self.provider, DeepgramGroqProvider):
-            log("daemon: fallback also failed - retrying Gemini in 30s")
-            threading.Timer(30, self._try_gemini_restore).start()
+            if config.PRIMARY_PROVIDER == "gemini":
+                log("daemon: fallback failed - retrying Gemini in 30s")
+                threading.Timer(30, self._try_gemini_restore).start()
+            else:
+                log("daemon: fallback failed - restarting Deepgram in 10s")
+                threading.Timer(10, self._restart_fallback).start()
 
     # ------------------------------------------------------------------
     # Switching
@@ -169,6 +178,24 @@ class InterviewDaemon:
             self.server.set_fallback_ai(self.fallback_ai)
             fallback.start(self.audio.get_stereo_callback())  # labeled stereo
             log("daemon: now on Deepgram fallback")
+
+    def _restart_fallback(self):
+        if self._stopped:
+            return
+        with self._switch_lock:
+            try:
+                if self.provider:
+                    self.provider.stop()
+            except Exception:
+                pass
+            fallback = DeepgramGroqProvider(fallback_ai=self.fallback_ai)
+            self._wire_provider(fallback)
+            self.provider = fallback
+            if self._paused:
+                fallback.pause()
+            self.server.set_fallback_ai(self.fallback_ai)
+            fallback.start(self.audio.get_stereo_callback())
+            log("daemon: restarted Deepgram fallback")
 
     def _try_gemini_restore(self):
         if self._stopped:

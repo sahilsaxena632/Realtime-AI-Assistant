@@ -193,12 +193,15 @@ class AudioCapture:
     # ------------------------------------------------------------------
     @staticmethod
     def _pick_recorder():
-        # pw-record (native PipeWire) is preferred: on PipeWire systems `parec`
-        # often returns only silence, while pw-record streams real samples.
-        if shutil.which("pw-record"):
-            return "pw-record"
+        # parec (PulseAudio/pipewire-pulse) is preferred because it addresses
+        # sources by their Pulse name - including ".monitor" sources. `pw-record
+        # --target` matches PipeWire *node* names instead, so a name like
+        # "interview.monitor" silently falls back to the default mic, which made
+        # both channels capture the microphone. parec resolves monitors reliably.
         if shutil.which("parec"):
             return "parec"
+        if shutil.which("pw-record"):
+            return "pw-record"
         return None
 
     def _capture_cmd(self, source, recorder):

@@ -79,8 +79,11 @@ class DeepgramGroqProvider(BaseProvider):
 
         self._tick_thread = threading.Thread(target=self._tick_loop, daemon=True)
         self._tick_thread.start()
-        self._probe_thread = threading.Thread(target=self._probe_loop, daemon=True)
-        self._probe_thread.start()
+        # Only probe for Gemini recovery if Gemini is the configured primary.
+        # When the user picks deepgram as primary we must NOT auto-switch away.
+        if config.PRIMARY_PROVIDER == "gemini":
+            self._probe_thread = threading.Thread(target=self._probe_loop, daemon=True)
+            self._probe_thread.start()
         log(f"deepgram: provider started (ai={self.fallback_ai})")
 
     def stop(self):

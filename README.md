@@ -191,9 +191,24 @@ with the rules of any interview or call you participate in.
   model or endpoint is outdated. Use the v1beta endpoint and a current Live
   model (e.g. `gemini-3.1-flash-live-preview`). List your account's models with
   `curl "https://generativelanguage.googleapis.com/v1beta/models?key=$GEMINI_API_KEY"`.
+- **It labels YOUR voice as the INTERVIEWER / both speakers look identical**:
+  this was caused by the capture backend. `pw-record --target <name>` matches
+  PipeWire *node* names, so a PulseAudio source like `xxx.monitor` silently
+  falls back to the default mic - making both channels capture your microphone.
+  The app now prefers `parec`, which addresses monitor sources correctly. Verify
+  the two streams differ with `python3 main.py --check-audio` (INTERVIEWER should
+  reflect the call audio, not your mic).
+- **You still hear yourself transcribed as YOU while on speakers**: that's your
+  mic picking up the interviewer through the speakers (acoustic bleed). It's
+  labeled YOU and never answered. Use **headphones** to eliminate it, or run
+  `./setup-audio.sh` for a guaranteed mic-free interviewer channel.
+- **Auto-switches to Gemini even though you chose Deepgram**: fixed - the daemon
+  now only auto-restores Gemini when `PRIMARY_PROVIDER=gemini`. With
+  `PRIMARY_PROVIDER=deepgram` it stays on Deepgram (you can still switch manually
+  from the phone UI).
 - **Transcription is blank but audio plays**: the captured `SYS_SOURCE` is not
   the device your audio actually plays through. Leave `SYS_SOURCE` blank to
-  auto-detect the current default-output monitor, and check the level with
-  `pw-record --target "$(pactl get-default-sink).monitor" --rate 16000 --channels 1 --format s16 --raw - | xxd | head`.
+  auto-detect the current default-output monitor, and check levels with
+  `python3 main.py --check-audio`.
 - **Logs**: `~/.interview-assistant/daemon.log`.
 ```
