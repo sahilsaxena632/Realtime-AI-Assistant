@@ -209,6 +209,7 @@ def cmd_start(args):
         mic_source=mic_source,
         sys_source=sys_source,
     )
+    _seed_context(args)
     signal.signal(signal.SIGTERM, _on_signal)
     signal.signal(signal.SIGINT, _on_signal)
     d.start()
@@ -355,6 +356,38 @@ def cmd_login(args):
     print("Run 'python3 main.py --list-devices' next, then './start.sh'.")
 
 
+def _read_context_file(path):
+    try:
+        return Path(path).read_text(encoding="utf-8")
+    except Exception as e:
+        log(f"main: could not read context file {path}: {e}")
+        return None
+
+
+def _seed_context(args):
+    """Load optional resume/jd/projects files into context_store before start."""
+    if not (args.resume or args.jd or args.projects):
+        return
+    import context_store
+
+    kwargs = {}
+    if args.resume:
+        text = _read_context_file(args.resume)
+        if text is not None:
+            kwargs["resume"] = text
+    if args.jd:
+        text = _read_context_file(args.jd)
+        if text is not None:
+            kwargs["jd"] = text
+    if args.projects:
+        text = _read_context_file(args.projects)
+        if text is not None:
+            kwargs["projects"] = text
+    if kwargs:
+        context_store.save(**kwargs)
+        log(f"main: seeded context from CLI ({', '.join(kwargs.keys())})")
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -394,6 +427,14 @@ def build_parser():
         choices=["groq", "claude", "chatgpt"],
         default=None,
         help="fallback AI preference",
+    )
+    p.add_argument("--resume", type=str, default=None, help="path to resume .txt/.md file")
+    p.add_argument("--jd", type=str, default=None, help="path to job description file")
+    p.add_argument(
+        "--projects",
+        type=str,
+        default=None,
+        help="path to key projects file",
     )
     return p
 

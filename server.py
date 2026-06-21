@@ -22,6 +22,7 @@ except Exception:  # pragma: no cover
     Sock = None
 
 import config
+import context_store
 from logutil import log
 
 
@@ -63,6 +64,7 @@ class PhoneServer:
         self.on_clear = None
         self.on_switch_ai = None
         self.on_switch_provider = None
+        self.on_set_context = None
         self.on_stop = None
         self.get_devices = None
 
@@ -243,6 +245,27 @@ class PhoneServer:
             devs = self.get_devices() if self.get_devices else []
             return jsonify(devices=devs)
 
+        @app.route("/context", methods=["GET"])
+        def get_context():
+            if not self._check_key():
+                return jsonify({"error": "unauthorized"}), 401
+            return jsonify(context_store.get_context())
+
+        @app.route("/context", methods=["POST"])
+        def set_context():
+            if not self._check_key():
+                return jsonify({"error": "unauthorized"}), 401
+            data = request.get_json(silent=True) or {}
+            updated = context_store.save(
+                resume=data.get("resume"),
+                jd=data.get("jd"),
+                projects=data.get("projects"),
+            )
+            if self.on_set_context:
+                self.on_set_context(updated)
+            self.push({"type": "context_updated"})
+            return jsonify({"ok": True})
+
         if self.sock is not None:
 
             @self.sock.route("/ws")
@@ -333,6 +356,31 @@ PHONE_HTML = r"""<!DOCTYPE html>
   #footer { border-top: 1px solid #101024; padding: 8px 14px; max-height: 30vh; overflow-y: auto; }
   .you { color: #6a6a9a; font-size: 12px; font-style: italic; margin: 2px 0; }
   #interim { color: #252540; font-size: 12px; font-style: italic; margin-top: 4px; }
+
+  #ctxPanel {
+    display: none; background: #0c0c1a; border-bottom: 1px solid #14142a;
+    padding: 12px 14px; max-height: 45vh; overflow-y: auto;
+  }
+  #ctxPanel.open { display: block; }
+  #ctxPanel h3 { font-size: 12px; color: #8888cc; margin-bottom: 10px; font-weight: 600; }
+  .ctx-field { margin-bottom: 10px; }
+  .ctx-field label { display: block; font-size: 11px; color: #6a6a9a; margin-bottom: 3px; }
+  .ctx-field textarea {
+    width: 100%; min-height: 64px; max-height: 120px; resize: vertical;
+    background: #080810; color: #e8e8ff; border: 1px solid #20204a; border-radius: 6px;
+    padding: 8px; font-size: 13px; font-family: inherit; line-height: 1.4;
+  }
+  .ctx-field textarea:focus { outline: none; border-color: #3a3aaa; }
+  .ctx-count { font-size: 10px; color: #3a3a66; text-align: right; margin-top: 2px; }
+  #ctxSaveRow { display: flex; align-items: center; gap: 10px; margin-top: 4px; }
+  #ctxSave {
+    background: #20204a; color: #c8c8f0; border: none; border-radius: 8px;
+    height: 32px; padding: 0 16px; font-size: 13px;
+  }
+  #ctxSave:active { background: #2a2a5a; }
+  #ctxSave.flash { border: 2px solid #3cff8c; box-shadow: 0 0 12px rgba(60,255,140,0.2); }
+  #ctxSaved { font-size: 12px; color: #3cff8c; opacity: 0; transition: opacity 0.3s; }
+  #ctxSaved.show { opacity: 1; }
 </style>
 </head>
 <body>
@@ -347,6 +395,30 @@ PHONE_HTML = r"""<!DOCTYPE html>
       <option value="chatgpt">ChatGPT</option>
     </select>
     <button class="btn" id="provBtn" title="Toggle provider">&#8644;</button>
+    <button class="btn" id="ctxBtn" title="Candidate context">&#9881;</button>
+  </div>
+
+  <div id="ctxPanel">
+    <h3>Candidate Context</h3>
+    <div class="ctx-field">
+      <label for="ctxResume">Resume</label>
+      <textarea id="ctxResume" placeholder="Paste your resume text here — experience, skills, education..."></textarea>
+      <div class="ctx-count" id="ctxResumeCount">0 / 4000</div>
+    </div>
+    <div class="ctx-field">
+      <label for="ctxProjects">Key Projects</label>
+      <textarea id="ctxProjects" placeholder="Paste detailed project descriptions — tech stack, your role, impact, metrics..."></textarea>
+      <div class="ctx-count" id="ctxProjectsCount">0 / 4000</div>
+    </div>
+    <div class="ctx-field">
+      <label for="ctxJd">Job Description</label>
+      <textarea id="ctxJd" placeholder="Paste the target role's job description — requirements, responsibilities, tech stack..."></textarea>
+      <div class="ctx-count" id="ctxJdCount">0 / 3000</div>
+    </div>
+    <div id="ctxSaveRow">
+      <button id="ctxSave">Save</button>
+      <span id="ctxSaved">Saved &#10003;</span>
+    </div>
   </div>
 
   <div id="content">
@@ -372,6 +444,14 @@ PHONE_HTML = r"""<!DOCTYPE html>
   const youEl = document.getElementById("you");
   const interimEl = document.getElementById("interim");
   const aiSel = document.getElementById("aiSel");
+
+  const ctxPanel = document.getElementById("ctxPanel");
+  const ctxResume = document.getElementById("ctxResume");
+  const ctxProjects = document.getElementById("ctxProjects");
+  const ctxJd = document.getElementById("ctxJd");
+  const ctxSave = document.getElementById("ctxSave");
+  const ctxSaved = document.getElementById("ctxSaved");
+  const LIMITS = { resume: 4000, projects: 4000, jd: 3000 };
 
   let ws = null;
   let provider = "gemini-live";
@@ -414,6 +494,57 @@ PHONE_HTML = r"""<!DOCTYPE html>
     post("/switch-provider", { provider: target });
   };
   aiSel.onchange = function () { post("/switch-ai", { ai: this.value }); };
+
+  document.getElementById("ctxBtn").onclick = function () {
+    ctxPanel.classList.toggle("open");
+  };
+
+  function updateCount(el, counterId, max) {
+    const len = el.value.length;
+    document.getElementById(counterId).textContent = len + " / " + max;
+    document.getElementById(counterId).style.color = len > max ? "#ff3c5c" : "#3a3a66";
+  }
+
+  ctxResume.oninput = function () { updateCount(ctxResume, "ctxResumeCount", LIMITS.resume); };
+  ctxProjects.oninput = function () { updateCount(ctxProjects, "ctxProjectsCount", LIMITS.projects); };
+  ctxJd.oninput = function () { updateCount(ctxJd, "ctxJdCount", LIMITS.jd); };
+
+  ctxSave.onclick = async function () {
+    const body = {
+      resume: ctxResume.value.slice(0, LIMITS.resume),
+      projects: ctxProjects.value.slice(0, LIMITS.projects),
+      jd: ctxJd.value.slice(0, LIMITS.jd),
+    };
+    try {
+      const r = await fetch("/context?key=" + encodeURIComponent(key), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (r.ok) {
+        ctxSave.classList.add("flash");
+        ctxSaved.classList.add("show");
+        setTimeout(function () {
+          ctxSave.classList.remove("flash");
+          ctxSaved.classList.remove("show");
+        }, 1500);
+      }
+    } catch (e) {}
+  };
+
+  async function loadContext() {
+    try {
+      const r = await fetch("/context?key=" + encodeURIComponent(key));
+      if (!r.ok) return;
+      const data = await r.json();
+      ctxResume.value = data.resume || "";
+      ctxProjects.value = data.projects || "";
+      ctxJd.value = data.jd || "";
+      updateCount(ctxResume, "ctxResumeCount", LIMITS.resume);
+      updateCount(ctxProjects, "ctxProjectsCount", LIMITS.projects);
+      updateCount(ctxJd, "ctxJdCount", LIMITS.jd);
+    } catch (e) {}
+  }
 
   function atBottom() {
     return answerEl.scrollHeight - answerEl.scrollTop - answerEl.clientHeight < 60;
@@ -460,6 +591,7 @@ PHONE_HTML = r"""<!DOCTYPE html>
         console.warn("error", msg.message);
         break;
       case "ping": break;
+      case "context_updated": break;
     }
   }
 
@@ -492,6 +624,7 @@ PHONE_HTML = r"""<!DOCTYPE html>
   }
 
   connect();
+  loadContext();
   wakeLock();
 })();
 </script>

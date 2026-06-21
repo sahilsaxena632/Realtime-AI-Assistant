@@ -242,6 +242,7 @@ class InterviewDaemon:
         self.server.on_clear = lambda: None
         self.server.on_switch_ai = self._set_fallback_ai
         self.server.on_switch_provider = self._manual_switch
+        self.server.on_set_context = lambda ctx: log("daemon: context updated")
         self.server.on_stop = self.stop
         self.server.get_devices = list_devices
 

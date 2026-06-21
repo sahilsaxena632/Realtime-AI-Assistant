@@ -166,7 +166,13 @@ class GeminiLiveProvider(BaseProvider):
                     "temperature": 0.3,
                 },
                 "systemInstruction": {
-                    "parts": [{"text": config.GEMINI_SYSTEM_PROMPT}]
+                    "parts": [
+                        {
+                            "text": config.build_system_prompt(
+                                config.GEMINI_BASE_PROMPT
+                            )
+                        }
+                    ]
                 },
                 "outputAudioTranscription": {},
                 "inputAudioTranscription": {},

@@ -8,3 +8,6 @@ venv/
 *.egg-info/
 .DS_Store
 calibration.json
+resume.txt
+jd.txt
+projects.txt

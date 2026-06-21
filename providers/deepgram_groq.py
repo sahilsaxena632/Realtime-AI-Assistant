@@ -273,7 +273,12 @@ class DeepgramGroqProvider(BaseProvider):
             max_tokens=400,
             stream=True,
             messages=[
-                {"role": "system", "content": config.FALLBACK_SYSTEM_PROMPT},
+                {
+                    "role": "system",
+                    "content": config.build_system_prompt(
+                        config.FALLBACK_BASE_PROMPT
+                    ),
+                },
                 {"role": "user", "content": user_content},
             ],
         )
@@ -299,7 +304,7 @@ class DeepgramGroqProvider(BaseProvider):
             model=config.CLAUDE_MODEL,
             max_tokens=400,
             temperature=0.3,
-            system=config.FALLBACK_SYSTEM_PROMPT,
+            system=config.build_system_prompt(config.FALLBACK_BASE_PROMPT),
             messages=[{"role": "user", "content": user_content}],
         ) as stream:
             for text in stream.text_stream:

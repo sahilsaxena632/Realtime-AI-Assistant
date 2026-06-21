@@ -142,7 +142,7 @@ GEMINI_RESTORE_INTERVAL_SEC = 60  # how often to probe Gemini while in fallback
 # ---------------------------------------------------------------------------
 # The Live model only outputs audio; we capture its spoken answer as text via
 # output transcription. It hears the interviewer's questions (system audio).
-GEMINI_SYSTEM_PROMPT = """You are a silent real-time interview assistant. You hear an interviewer asking
+GEMINI_BASE_PROMPT = """You are a silent real-time interview assistant. You hear an interviewer asking
 a candidate questions. When the interviewer asks a question, immediately answer
 it concisely so the candidate can use your answer. If the interviewer is not
 asking a question (small talk, instructions), stay silent.
@@ -154,13 +154,23 @@ Answer style:
 - General CS: a direct 2-3 sentence answer.
 Keep answers under 150 words. Speak plainly, no markdown symbols."""
 
-FALLBACK_SYSTEM_PROMPT = """You are a silent real-time coding interview assistant.
+FALLBACK_BASE_PROMPT = """You are a silent real-time coding interview assistant.
 You receive questions from the interviewer.
 Coding: 1-line approach + clean commented code.
 System design: bullet points, trade-offs.
 Behavioral: STAR, 3-4 bullets.
 General CS: 2-3 sentences.
 Max 200 words. Plain text only. No markdown."""
+
+
+def build_system_prompt(base_prompt: str) -> str:
+    """Append live candidate context (resume/JD/projects) to a base system prompt."""
+    import context_store
+
+    block = context_store.build_prompt_block()
+    if not block:
+        return base_prompt
+    return f"{base_prompt}\n\n{block}"
 
 
 def ensure_dirs() -> None:
