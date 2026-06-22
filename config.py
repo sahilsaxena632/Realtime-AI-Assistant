@@ -106,6 +106,10 @@ DEEPGRAM_MODEL = _env("DEEPGRAM_MODEL", "nova-2")
 DEFAULT_FALLBACK_AI = _env("DEFAULT_AI", "groq")  # groq / claude / chatgpt
 GROQ_API_KEY = _env("GROQ_API_KEY")
 GROQ_MODEL = _env("GROQ_MODEL", "llama-3.3-70b-versatile")
+# NVIDIA NIM (second fallback): OpenAI-compatible endpoint used when Groq 429s.
+NVIDIA_API_KEY = os.getenv("NVIDIA_API_KEY", "")
+NVIDIA_BASE_URL = "https://integrate.api.nvidia.com/v1"
+NVIDIA_MODEL = os.getenv("NVIDIA_MODEL", "meta/llama-3.1-70b-instruct")
 CLAUDE_API_KEY = _env("ANTHROPIC_API_KEY") or _env("CLAUDE_API_KEY")
 CLAUDE_MODEL = _env("CLAUDE_MODEL", "claude-sonnet-4-6")
 OPENAI_API_KEY = _env("OPENAI_API_KEY")

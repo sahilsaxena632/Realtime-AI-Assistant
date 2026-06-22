@@ -391,6 +391,7 @@ PHONE_HTML = r"""<!DOCTYPE html>
     <button class="btn" id="clearBtn">&#9003;</button>
     <select class="btn" id="aiSel" title="Fallback AI">
       <option value="groq">Groq</option>
+      <option value="nvidia">NVIDIA</option>
       <option value="claude">Claude</option>
       <option value="chatgpt">ChatGPT</option>
     </select>

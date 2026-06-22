@@ -27,6 +27,29 @@ except Exception:  # pragma: no cover
     LiveTranscriptionEvents = None
 
 
+# 429 / rate-limit exception types from the OpenAI-compatible SDKs. The Groq SDK
+# raises groq.RateLimitError on 429; the OpenAI SDK (used for NVIDIA NIM and
+# ChatGPT) raises openai.RateLimitError. We collect whichever are importable so
+# the Groq -> NVIDIA NIM fallback only triggers on genuine rate limits (not on
+# 401 bad keys or 403 unregistered models).
+def _collect_rate_limit_errors():
+    errors = []
+    try:
+        from groq import RateLimitError as _GroqRateLimitError
+        errors.append(_GroqRateLimitError)
+    except Exception:  # pragma: no cover
+        pass
+    try:
+        from openai import RateLimitError as _OpenAIRateLimitError
+        errors.append(_OpenAIRateLimitError)
+    except Exception:  # pragma: no cover
+        pass
+    return tuple(errors)
+
+
+_RATE_LIMIT_ERRORS = _collect_rate_limit_errors()
+
+
 # Deterministic channel mapping: mic (channel 0) is always YOU, system audio
 # (channel 1) is always the INTERVIEWER. No diarization guessing needed.
 CHANNEL_MAP = {0: "YOU", 1: "INTERVIEWER"}
@@ -84,6 +107,16 @@ class DeepgramGroqProvider(BaseProvider):
         if config.PRIMARY_PROVIDER == "gemini":
             self._probe_thread = threading.Thread(target=self._probe_loop, daemon=True)
             self._probe_thread.start()
+        if config.NVIDIA_API_KEY:
+            log(
+                "[deepgram_groq] NVIDIA NIM configured as second fallback "
+                f"(model: {config.NVIDIA_MODEL})"
+            )
+        else:
+            log(
+                "[deepgram_groq] NVIDIA NIM not configured "
+                "(set NVIDIA_API_KEY to enable)"
+            )
         log(f"deepgram: provider started (ai={self.fallback_ai})")
 
     def stop(self):
@@ -227,7 +260,7 @@ class DeepgramGroqProvider(BaseProvider):
             self._answer_lock.release()
 
     def _provider_order(self):
-        base = ["groq", "claude", "chatgpt"]
+        base = ["groq", "nvidia", "claude", "chatgpt"]
         pref = self.fallback_ai if self.fallback_ai in base else "groq"
         return [pref] + [p for p in base if p != pref]
 
@@ -247,6 +280,16 @@ class DeepgramGroqProvider(BaseProvider):
             return self._stream_openai_like(
                 "groq", config.GROQ_API_KEY, config.GROQ_MODEL, user_content
             )
+        if provider == "nvidia":
+            if not config.NVIDIA_API_KEY:
+                raise RuntimeError("nvidia api key missing")
+            return self._call_openai_endpoint(
+                "openai",
+                config.NVIDIA_API_KEY,
+                config.NVIDIA_MODEL,
+                user_content,
+                base_url=config.NVIDIA_BASE_URL,
+            )
         if provider == "chatgpt":
             return self._stream_openai_like(
                 "openai", config.OPENAI_API_KEY, config.OPENAI_MODEL, user_content
@@ -256,8 +299,72 @@ class DeepgramGroqProvider(BaseProvider):
         return False
 
     def _stream_openai_like(self, kind, api_key, model, user_content):
+        """Stream an answer from an OpenAI-compatible provider.
+
+        Groq is the first attempt. If Groq returns HTTP 429 (rate limited) we
+        automatically retry the exact same request against NVIDIA NIM, which is
+        also OpenAI-compatible (same request/response shape, different base_url
+        and api_key). Non-429 errors propagate immediately with no retry, and
+        the ChatGPT path is unaffected (it does not fall back to NIM).
+        """
         if not api_key:
             raise RuntimeError(f"{kind} api key missing")
+
+        if kind != "groq":
+            return self._call_openai_endpoint(kind, api_key, model, user_content)
+
+        attempts = [
+            {
+                "label": "Groq",
+                "kind": "groq",
+                "base_url": None,
+                "api_key": api_key,
+                "model": model,
+            },
+            {
+                "label": "NVIDIA NIM",
+                "kind": "openai",
+                "base_url": config.NVIDIA_BASE_URL,
+                "api_key": config.NVIDIA_API_KEY,
+                "model": config.NVIDIA_MODEL,
+            },
+        ]
+
+        last_error = None
+        for attempt in attempts:
+            if not attempt["api_key"]:
+                # Skip silently if this provider's key isn't configured.
+                continue
+            try:
+                return self._call_openai_endpoint(
+                    attempt["kind"],
+                    attempt["api_key"],
+                    attempt["model"],
+                    user_content,
+                    base_url=attempt["base_url"],
+                )
+            except _RATE_LIMIT_ERRORS as e:
+                log(
+                    f"[deepgram_groq] {attempt['label']} rate limited, "
+                    "trying next provider..."
+                )
+                last_error = e
+                continue
+            # Non-rate-limit errors (e.g. 401 bad key, 403 unregistered model)
+            # propagate immediately - we do not retry those.
+
+        if last_error:
+            raise last_error
+        return False
+
+    def _call_openai_endpoint(self, kind, api_key, model, user_content,
+                              base_url=None):
+        """Single OpenAI-compatible streaming call (shared by Groq/NIM/ChatGPT).
+
+        Extracted verbatim from the original _stream_openai_like body; the only
+        addition is the optional base_url, which the NVIDIA NIM attempt passes
+        so the OpenAI SDK targets NIM's endpoint.
+        """
         if kind == "groq":
             from groq import Groq
 
@@ -265,7 +372,11 @@ class DeepgramGroqProvider(BaseProvider):
         else:
             from openai import OpenAI
 
-            client = OpenAI(api_key=api_key)
+            client = (
+                OpenAI(api_key=api_key, base_url=base_url)
+                if base_url
+                else OpenAI(api_key=api_key)
+            )
 
         stream = client.chat.completions.create(
             model=model,
