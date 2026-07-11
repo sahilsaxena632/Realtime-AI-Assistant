@@ -51,6 +51,9 @@ class GeminiLiveProvider(BaseProvider):
         self._awaiting_answer = False
         self._await_stamp = 0.0
 
+        self._last_frame_sent = 0.0
+        self._video_disabled = False
+
     # ------------------------------------------------------------------
     # BaseProvider API
     # ------------------------------------------------------------------
@@ -187,6 +190,8 @@ class GeminiLiveProvider(BaseProvider):
         if "setupComplete" not in data:
             if data.get("error"):
                 raise _Fatal(str(data["error"]))
+        self._video_disabled = False
+        self._last_frame_sent = 0.0
         self._reset_turn()
 
     # ------------------------------------------------------------------
@@ -205,11 +210,39 @@ class GeminiLiveProvider(BaseProvider):
             }
             try:
                 await self._ws.send(json.dumps(msg))
+                await self._maybe_send_frame()
             except ConnectionClosed as e:
                 self._raise_for_close(e)
             except Exception as e:
                 log(f"gemini: send failed: {e}")
                 raise _Reconnect()
+
+    async def _maybe_send_frame(self):
+        """Attach the latest screen frame as realtime video, at most every 2s."""
+        if self._video_disabled or self.frame_source is None:
+            return
+        now = time.time()
+        if now - self._last_frame_sent < 2.0:
+            return
+        frame = self.get_frame(config.SCREEN_FRAME_MAX_AGE_SEC)
+        if not frame:
+            return
+        self._last_frame_sent = now
+        msg = {
+            "realtimeInput": {
+                "video": {
+                    "data": base64.b64encode(frame).decode("ascii"),
+                    "mimeType": "image/jpeg",
+                }
+            }
+        }
+        try:
+            await self._ws.send(json.dumps(msg))
+        except ConnectionClosed:
+            raise
+        except Exception as e:
+            self._video_disabled = True
+            log(f"gemini: video frames disabled for this session: {e}")
 
     # ------------------------------------------------------------------
     # Receiver
@@ -235,7 +268,12 @@ class GeminiLiveProvider(BaseProvider):
                 continue
 
             if data.get("error"):
-                raise _Fatal(str(data["error"]))
+                err = str(data["error"])
+                if "video" in err.lower():
+                    self._video_disabled = True
+                    log(f"gemini: video frames disabled for this session: {err}")
+                    continue
+                raise _Fatal(err)
             self._handle_server_message(data)
 
     def _handle_server_message(self, data):

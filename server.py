@@ -54,6 +54,7 @@ class PhoneServer:
         self._paused = False
         self._state = "listening"
         self._fallback_ai = config.DEFAULT_FALLBACK_AI
+        self._screen_enabled = config.SCREEN_CONTEXT_ENABLED
         self._transcript = []  # last 10 chunk dicts
         self._answer = ""
         self._start_time = time.time()
@@ -65,6 +66,7 @@ class PhoneServer:
         self.on_switch_ai = None
         self.on_switch_provider = None
         self.on_set_context = None
+        self.on_screen_context = None
         self.on_stop = None
         self.get_devices = None
 
@@ -125,6 +127,8 @@ class PhoneServer:
             elif t == "status":
                 self._state = msg.get("state", self._state)
                 self._paused = msg.get("state") == "paused"
+            elif t == "screen":
+                self._screen_enabled = bool(msg.get("enabled"))
 
     def _snapshot(self):
         with self._state_lock:
@@ -135,6 +139,7 @@ class PhoneServer:
                     "state": "paused" if self._paused else self._state,
                 }
             )
+            msgs.append({"type": "screen", "enabled": self._screen_enabled})
             for c in self._transcript:
                 msgs.append(c)
             if self._answer:
@@ -218,6 +223,16 @@ class PhoneServer:
                 self.on_switch_provider(prov)
             return jsonify(ok=True, provider=prov)
 
+        @app.route("/screen-context", methods=["POST"])
+        def screen_context():
+            if not self._check_key():
+                return Response(status=401)
+            enabled = bool((request.get_json(silent=True) or {}).get("enabled", False))
+            if self.on_screen_context:
+                self.on_screen_context(enabled)
+            self.push({"type": "screen", "enabled": enabled})
+            return jsonify(ok=True, enabled=enabled)
+
         @app.route("/stop", methods=["POST"])
         def stop():
             if not self._check_key():
@@ -236,6 +251,7 @@ class PhoneServer:
                     paused=self._paused,
                     uptime=int(time.time() - self._start_time),
                     fallback_ai=self._fallback_ai,
+                    screen_enabled=self._screen_enabled,
                 )
 
         @app.route("/devices")
@@ -336,6 +352,7 @@ PHONE_HTML = r"""<!DOCTYPE html>
     height: 30px; min-width: 34px; padding: 0 8px; font-size: 14px;
   }
   .btn:active { background: #20204a; }
+  .btn.on { background: #1d3a2a; color: #3cff8c; box-shadow: inset 0 0 0 1px #2a6a4a; }
   select.btn { height: 30px; }
   select:disabled { opacity: 0.4; }
 
@@ -396,6 +413,7 @@ PHONE_HTML = r"""<!DOCTYPE html>
       <option value="chatgpt">ChatGPT</option>
     </select>
     <button class="btn" id="provBtn" title="Toggle provider">&#8644;</button>
+    <button class="btn" id="screenBtn" title="Screen context">&#128421;</button>
     <button class="btn" id="ctxBtn" title="Candidate context">&#9881;</button>
   </div>
 
@@ -445,6 +463,7 @@ PHONE_HTML = r"""<!DOCTYPE html>
   const youEl = document.getElementById("you");
   const interimEl = document.getElementById("interim");
   const aiSel = document.getElementById("aiSel");
+  const screenBtn = document.getElementById("screenBtn");
 
   const ctxPanel = document.getElementById("ctxPanel");
   const ctxResume = document.getElementById("ctxResume");
@@ -456,6 +475,12 @@ PHONE_HTML = r"""<!DOCTYPE html>
 
   let ws = null;
   let provider = "gemini-live";
+  let screenOn = false;
+
+  function setScreen(on) {
+    screenOn = !!on;
+    screenBtn.classList.toggle("on", screenOn);
+  }
 
   function setProvider(name) {
     provider = name;
@@ -493,6 +518,9 @@ PHONE_HTML = r"""<!DOCTYPE html>
   document.getElementById("provBtn").onclick = function () {
     const target = provider === "gemini-live" ? "fallback" : "gemini";
     post("/switch-provider", { provider: target });
+  };
+  screenBtn.onclick = function () {
+    post("/screen-context", { enabled: !screenOn });
   };
   aiSel.onchange = function () { post("/switch-ai", { ai: this.value }); };
 
@@ -554,6 +582,7 @@ PHONE_HTML = r"""<!DOCTYPE html>
   function handle(msg) {
     switch (msg.type) {
       case "provider": setProvider(msg.name); break;
+      case "screen": setScreen(msg.enabled); break;
       case "status":
         if (msg.state === "paused") { dot.classList.add("off"); }
         else { dot.classList.remove("off"); }

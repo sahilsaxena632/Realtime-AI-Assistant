@@ -337,6 +337,22 @@ def cmd_check_audio(args):
     )
 
 
+def cmd_check_screen(args):
+    """Take a single screenshot and report whether screen capture works."""
+    from screen import ScreenCapture
+
+    config.ensure_dirs()
+    cap = ScreenCapture()
+    ok, info = cap.capture_once()
+    if ok:
+        print(f"Screen capture OK: {info}")
+        print("Enable at runtime from the phone UI, or set SCREEN_CONTEXT=1 in .env")
+    else:
+        print(f"Screen capture FAILED: {info}")
+        print("Install one of: cosmic-screenshot, grim, gnome-screenshot, scrot,")
+        print('or set SCREEN_CAPTURE_CMD="<tool> {path}" in .env')
+
+
 def cmd_calibrate(args):
     from calibration import run_calibration
 
@@ -417,6 +433,11 @@ def build_parser():
         action="store_true",
         help="capture a few seconds and report whether sources pick up real audio",
     )
+    g.add_argument(
+        "--check-screen",
+        action="store_true",
+        help="take one screenshot and report backend, resolution and size",
+    )
     g.add_argument("--calibrate", action="store_true", help="run voice calibration")
     g.add_argument("--login", action="store_true", help="first-time setup")
 
@@ -453,6 +474,8 @@ def main():
         cmd_list_devices(args)
     elif args.check_audio:
         cmd_check_audio(args)
+    elif args.check_screen:
+        cmd_check_screen(args)
     elif args.calibrate:
         cmd_calibrate(args)
     elif args.login:

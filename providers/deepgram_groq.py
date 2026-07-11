@@ -8,6 +8,7 @@ A background probe periodically checks whether Gemini Live has recovered and,
 if so, signals the daemon (via on_provider_name) to switch back.
 """
 
+import base64
 import json
 import os
 import threading
@@ -243,11 +244,13 @@ class DeepgramGroqProvider(BaseProvider):
         if not self._answer_lock.acquire(blocking=False):
             return
         try:
-            order = self._provider_order()
+            frame = self.get_frame(config.SCREEN_FRAME_MAX_AGE_SEC)
+            image_b64 = base64.b64encode(frame).decode("ascii") if frame else None
+            order = self._provider_order(vision=image_b64 is not None)
             self.emit_ai_start()
             for provider in order:
                 try:
-                    streamed = self._stream_provider(provider, question)
+                    streamed = self._stream_provider(provider, question, image_b64)
                     if streamed:
                         self.emit_ai_done()
                         return
@@ -259,10 +262,29 @@ class DeepgramGroqProvider(BaseProvider):
         finally:
             self._answer_lock.release()
 
-    def _provider_order(self):
+    def _provider_order(self, vision=False):
         base = ["groq", "nvidia", "claude", "chatgpt"]
         pref = self.fallback_ai if self.fallback_ai in base else "groq"
-        return [pref] + [p for p in base if p != pref]
+        order = [pref] + [p for p in base if p != pref]
+        if not vision:
+            return order
+        # With a screenshot: vision-capable providers with keys first,
+        # text-only providers keep their relative order as fallback.
+        def has_key(p):
+            return bool(
+                {"chatgpt": config.OPENAI_API_KEY, "claude": config.CLAUDE_API_KEY}.get(
+                    p
+                )
+            )
+
+        vis = [p for p in order if p in config.VISION_PROVIDERS and has_key(p)]
+        rest = [p for p in order if p not in vis]
+        if not vis:
+            log(
+                "screen: frame available but no vision provider key "
+                "(OPENAI/CLAUDE); text-only answer"
+            )
+        return vis + rest
 
     def _build_messages(self):
         history_lines = []
@@ -270,15 +292,21 @@ class DeepgramGroqProvider(BaseProvider):
             history_lines.append(f"[{spk}]: {txt}")
         return "\n".join(history_lines)
 
-    def _stream_provider(self, provider, question):
+    def _stream_provider(self, provider, question, image_b64=None):
         context = self._build_messages()
         user_content = (
             f"Recent conversation:\n{context}\n\n"
             f"Answer the interviewer's latest question: {question}"
         )
+        if image_b64:
+            user_content += f"\n\n{config.SCREEN_HINT}"
         if provider == "groq":
             return self._stream_openai_like(
-                "groq", config.GROQ_API_KEY, config.GROQ_MODEL, user_content
+                "groq",
+                config.GROQ_API_KEY,
+                config.GROQ_MODEL,
+                user_content,
+                image_b64=None,
             )
         if provider == "nvidia":
             if not config.NVIDIA_API_KEY:
@@ -292,13 +320,17 @@ class DeepgramGroqProvider(BaseProvider):
             )
         if provider == "chatgpt":
             return self._stream_openai_like(
-                "openai", config.OPENAI_API_KEY, config.OPENAI_MODEL, user_content
+                "openai",
+                config.OPENAI_API_KEY,
+                config.OPENAI_MODEL,
+                user_content,
+                image_b64=image_b64,
             )
         if provider == "claude":
-            return self._stream_claude(user_content)
+            return self._stream_claude(user_content, image_b64=image_b64)
         return False
 
-    def _stream_openai_like(self, kind, api_key, model, user_content):
+    def _stream_openai_like(self, kind, api_key, model, user_content, image_b64=None):
         """Stream an answer from an OpenAI-compatible provider.
 
         Groq is the first attempt. If Groq returns HTTP 429 (rate limited) we
@@ -311,7 +343,9 @@ class DeepgramGroqProvider(BaseProvider):
             raise RuntimeError(f"{kind} api key missing")
 
         if kind != "groq":
-            return self._call_openai_endpoint(kind, api_key, model, user_content)
+            return self._call_openai_endpoint(
+                kind, api_key, model, user_content, image_b64=image_b64
+            )
 
         attempts = [
             {
@@ -357,8 +391,9 @@ class DeepgramGroqProvider(BaseProvider):
             raise last_error
         return False
 
-    def _call_openai_endpoint(self, kind, api_key, model, user_content,
-                              base_url=None):
+    def _call_openai_endpoint(
+        self, kind, api_key, model, user_content, base_url=None, image_b64=None
+    ):
         """Single OpenAI-compatible streaming call (shared by Groq/NIM/ChatGPT).
 
         Extracted verbatim from the original _stream_openai_like body; the only
@@ -378,6 +413,22 @@ class DeepgramGroqProvider(BaseProvider):
                 else OpenAI(api_key=api_key)
             )
 
+        if image_b64:
+            user_message = {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": user_content},
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/jpeg;base64,{image_b64}"
+                        },
+                    },
+                ],
+            }
+        else:
+            user_message = {"role": "user", "content": user_content}
+
         stream = client.chat.completions.create(
             model=model,
             temperature=0.3,
@@ -390,7 +441,7 @@ class DeepgramGroqProvider(BaseProvider):
                         config.FALLBACK_BASE_PROMPT
                     ),
                 },
-                {"role": "user", "content": user_content},
+                user_message,
             ],
         )
         got = False
@@ -404,10 +455,25 @@ class DeepgramGroqProvider(BaseProvider):
                 self.emit_ai_chunk(delta)
         return got
 
-    def _stream_claude(self, user_content):
+    def _stream_claude(self, user_content, image_b64=None):
         if not config.CLAUDE_API_KEY:
             raise RuntimeError("claude api key missing")
         from anthropic import Anthropic
+
+        if image_b64:
+            content = [
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "image/jpeg",
+                        "data": image_b64,
+                    },
+                },
+                {"type": "text", "text": user_content},
+            ]
+        else:
+            content = user_content
 
         client = Anthropic(api_key=config.CLAUDE_API_KEY)
         got = False
@@ -416,7 +482,7 @@ class DeepgramGroqProvider(BaseProvider):
             max_tokens=400,
             temperature=0.3,
             system=config.build_system_prompt(config.FALLBACK_BASE_PROMPT),
-            messages=[{"role": "user", "content": user_content}],
+            messages=[{"role": "user", "content": content}],
         ) as stream:
             for text in stream.text_stream:
                 if text:
