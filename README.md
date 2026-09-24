@@ -48,7 +48,6 @@ manually from the phone UI).
 ├── main.py            # entry point, CLI, manual double-fork daemonizer
 ├── daemon.py          # core orchestrator, manages all modules + switching
 ├── audio.py           # dual parec capture, 20 ms PCM16 stream + AGC
-├── screen.py          # periodic screen capture, in-memory latest JPEG frame
 ├── chunker.py         # smart text chunker + speaker labeling
 ├── calibration.py     # speaker voice calibration (pyannote)
 ├── context_store.py   # persistent candidate context (resume / JD / projects)
@@ -146,49 +145,6 @@ You can switch providers live from the phone UI's provider toggle (⇄).
 (Older `sounddevice` `MIC_INDEX`/`SYS_INDEX` still work as a fallback if
 `parec` is not available.)
 
-### Screen context
-
-The assistant can capture your PC screen every 2 seconds and use it as context
-when answering questions — useful for coding interviews where the interviewer
-asks about code visible on your display.
-
-- **Deepgram path**: when an interviewer question completes, the latest frame is
-  attached to vision-capable models (**ChatGPT / GPT-4o** or **Claude**). Groq
-  and NVIDIA NIM remain text-only fallbacks and never receive images.
-- **Gemini Live path**: frames are streamed as `realtimeInput.video` alongside
-  system audio (at most one frame every 2 s).
-
-**Privacy**: frames are held in memory only. Each grab writes a temporary file
-that is deleted immediately after encoding. Screen context is **off by default**.
-
-**Enable at startup**: set `SCREEN_CONTEXT=1` in `.env`, or toggle the **screen
-button (🖥)** in the phone UI at runtime.
-
-**Verify capture works**:
-
-```bash
-python3 main.py --check-screen
-```
-
-**Capture backends** (auto-detected in order):
-
-| Desktop | Tool |
-|---------|------|
-| Pop!_OS COSMIC | `cosmic-screenshot` (preinstalled) |
-| GNOME | `gnome-screenshot` |
-| wlroots (Sway/Hyprland) | `grim` |
-| X11 | `scrot` |
-
-Override with `SCREEN_CAPTURE_CMD="grim {path}"` in `.env` if needed. The
-`{path}` placeholder is required.
-
-**Vision API keys**: attach screenshots requires `OPENAI_API_KEY` and/or
-`ANTHROPIC_API_KEY`. Without either, the frame is dropped and answers fall
-back to Groq text-only.
-
-On COSMIC/Wayland, the first capture may show a one-time XDG portal permission
-prompt.
-
 ---
 
 ## CLI
@@ -200,7 +156,6 @@ python3 main.py --restart               # restart daemon
 python3 main.py --status                # running? pid + phone URL
 python3 main.py --list-devices          # list audio devices + recommended .env
 python3 main.py --check-audio           # capture 6 s and verify both channels
-python3 main.py --check-screen          # take one screenshot and verify capture
 python3 main.py --calibrate             # voice calibration (foreground)
 python3 main.py --login                 # first-time setup / regen key
 
@@ -221,8 +176,7 @@ Single dark fullscreen page (vanilla JS):
 
 - **Status bar** — provider dot (purple = Gemini Live, orange = Deepgram, red =
   disconnected/paused), pause (⏸), clear (⌫), fallback-AI selector
-  (Groq / NVIDIA / Claude / ChatGPT), provider toggle (⇄), screen context
-  toggle (🖥), context panel (⚙).
+  (Groq / NVIDIA / Claude / ChatGPT), provider toggle (⇄), context panel (⚙).
 - **Interviewer question**, large **streaming AI answer** (Courier, 22 px), and a
   dim footer with your speech + live interim transcript.
 - **Context panel (⚙)** — paste your resume, key projects, and job description

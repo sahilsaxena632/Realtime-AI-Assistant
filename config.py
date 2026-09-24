@@ -116,28 +116,6 @@ OPENAI_API_KEY = _env("OPENAI_API_KEY")
 OPENAI_MODEL = _env("OPENAI_MODEL", "gpt-4o")
 
 # ---------------------------------------------------------------------------
-# Screen context (screenshots attached to answers)
-# ---------------------------------------------------------------------------
-# Master switch at startup; can be toggled at runtime from the phone UI.
-SCREEN_CONTEXT_ENABLED = _env("SCREEN_CONTEXT", "0") in ("1", "true", "True", "yes")
-SCREEN_CAPTURE_INTERVAL = float(_env("SCREEN_CAPTURE_INTERVAL", "2.0"))
-# Frames older than this are considered stale and never attached.
-SCREEN_FRAME_MAX_AGE_SEC = float(_env("SCREEN_FRAME_MAX_AGE_SEC", "15"))
-# Optional manual override, e.g. "grim {path}". Must contain the {path}
-# placeholder; the command must write a PNG/JPEG image to that path.
-SCREEN_CAPTURE_CMD = _env("SCREEN_CAPTURE_CMD", "")
-SCREEN_MAX_DIM = 1440           # longest edge after downscale
-SCREEN_JPEG_QUALITY = 70
-# Fallback AIs that accept images (subset of groq/nvidia/claude/chatgpt).
-VISION_PROVIDERS = ("chatgpt", "claude")
-# Appended to the user message only when an image is attached.
-SCREEN_HINT = (
-    "A screenshot of the candidate's screen is attached. If the question "
-    "refers to code, an error, a diagram or anything visible on screen, "
-    "use the screenshot to answer precisely."
-)
-
-# ---------------------------------------------------------------------------
 # Smart chunker
 # ---------------------------------------------------------------------------
 SILENCE_SPLIT_SEC = 1.5

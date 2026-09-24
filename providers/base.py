@@ -18,11 +18,6 @@ class BaseProvider(ABC):
     on_error = None  # (error: str, fatal: bool)
     on_provider_name = None  # (name: str) - fired when provider identity changes
 
-    # Optional frame source wired by daemon.py. Callable
-    # (max_age_sec) -> JPEG bytes | None. Providers that support screen
-    # context call this when building a request; None means "no screen".
-    frame_source = None
-
     @abstractmethod
     def start(self, audio_callback):
         """
@@ -43,9 +38,6 @@ class BaseProvider(ABC):
     @abstractmethod
     def resume(self):
         raise NotImplementedError
-
-    def set_frame_source(self, fn):
-        self.frame_source = fn
 
     # ------------------------------------------------------------------
     # Safe event helpers so subclasses never crash on an unset callback.
@@ -80,11 +72,3 @@ class BaseProvider(ABC):
 
     def emit_provider_name(self, name):
         self._fire(self.on_provider_name, name)
-
-    def get_frame(self, max_age_sec):
-        if self.frame_source is None:
-            return None
-        try:
-            return self.frame_source(max_age_sec)
-        except Exception:
-            return None

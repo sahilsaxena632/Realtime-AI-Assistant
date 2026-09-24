@@ -11,5 +11,4 @@ anthropic
 openai
 groq
 qrcode[pil]
-pillow
 pyannote.audio

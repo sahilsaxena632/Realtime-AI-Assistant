@@ -11,7 +11,6 @@ import time
 import config
 from logutil import log
 from audio import AudioCapture, list_devices
-from screen import ScreenCapture
 from server import PhoneServer
 from providers import GeminiLiveProvider, DeepgramGroqProvider
 from providers import gemini_live
@@ -38,8 +37,6 @@ class InterviewDaemon:
             sys_source=sys_source,
         )
         self.server = PhoneServer(server_key or config.SERVER_KEY)
-        self.screen = ScreenCapture()
-        self._screen_enabled = config.SCREEN_CONTEXT_ENABLED
         self.provider = None
         self._paused = False
         self._switch_lock = threading.Lock()
@@ -53,8 +50,6 @@ class InterviewDaemon:
         self._wire_server_controls()
         self.server.start()
         self.audio.start()
-        if self._screen_enabled:
-            self.screen.start()
 
         # Choose starting provider: explicit preference, else Gemini if keyed.
         if config.PRIMARY_PROVIDER == "deepgram":
@@ -89,10 +84,6 @@ class InterviewDaemon:
             pass
         try:
             self.audio.stop()
-        except Exception:
-            pass
-        try:
-            self.screen.stop()
         except Exception:
             pass
 
@@ -136,11 +127,6 @@ class InterviewDaemon:
         )
         provider.on_error = self._handle_provider_error
         provider.on_provider_name = self._handle_provider_name
-        provider.set_frame_source(
-            lambda max_age: self.screen.latest_frame(max_age)
-            if self._screen_enabled
-            else None
-        )
 
     def _handle_provider_name(self, name):
         # A fallback provider reporting "gemini-live" means Gemini recovered.
@@ -257,7 +243,6 @@ class InterviewDaemon:
         self.server.on_switch_ai = self._set_fallback_ai
         self.server.on_switch_provider = self._manual_switch
         self.server.on_set_context = lambda ctx: log("daemon: context updated")
-        self.server.on_screen_context = self._set_screen_context
         self.server.on_stop = self.stop
         self.server.get_devices = list_devices
 
@@ -266,24 +251,9 @@ class InterviewDaemon:
         if isinstance(self.provider, DeepgramGroqProvider):
             self.provider.set_ai(ai)
 
-    def _set_screen_context(self, enabled):
-        self._screen_enabled = bool(enabled)
-        if self._screen_enabled:
-            self.screen.start()
-        else:
-            self.screen.stop()
-        if self.provider:
-            self.provider.set_frame_source(
-                lambda max_age: self.screen.latest_frame(max_age)
-                if self._screen_enabled
-                else None
-            )
-        log(f"daemon: screen context {'enabled' if enabled else 'disabled'}")
-
     def pause(self):
         self._paused = True
         self.audio.pause()
-        self.screen.pause()
         if self.provider:
             self.provider.pause()
         log("daemon: paused")
@@ -291,7 +261,6 @@ class InterviewDaemon:
     def resume(self):
         self._paused = False
         self.audio.resume()
-        self.screen.resume()
         if self.provider:
             self.provider.resume()
         log("daemon: resumed")
